@@ -743,7 +743,7 @@ DecryptResult Decryptor::DeriveKey(const std::u8string &password,
     else
     {
         // Newer versions of AES Crypt use UTF-8 as the character encoding
-        std::ranges::copy(password, std::back_inserter(pw));
+        std::copy(password.begin(), password.end(), std::back_inserter(pw));
     }
 
     try
@@ -852,7 +852,7 @@ DecryptResult Decryptor::GetSessionKey(std::istream &source,
         }
 
         // Copy the IV, as it will be over-written
-        std::ranges::copy(iv, plaintext_iv.begin());
+        std::copy(iv.begin(), iv.end(), plaintext_iv.begin());
 
         // Read the encrypted IV and key
         result = ReadOctets(source, iv_and_key);
@@ -964,16 +964,7 @@ DecryptResult Decryptor::GetSessionKey(std::istream &source,
  *      Nothing.
  *
  *  Comments:
- *      A ring buffer is used to read and process blocks of data.  In general,
- *      the "tail" refers to the previous ciphertext block (or IV at the start)
- *      and "current_block" refers to the ciphertext block being decrypted.
- *      The "head" variable points to the position in the buffer where new data
- *      will be placed.  Sometimes, the head variable will point just beyond
- *      the ring buffer, which eases computation of the number of octets in
- *      the ring buffer.  However, a check for that state will be performed
- *      before reading additional data.  Once all ciphertext blocks are
- *      consumes, the same ring buffer will contain the HMAC and other data
- *      as described in the AES Crypt Stream Format documentation.
+ *      None.
  */
 DecryptResult Decryptor::DecryptStream(
                                 std::istream &source,
@@ -987,16 +978,19 @@ DecryptResult Decryptor::DecryptStream(
     SecUtil::SecureArray<std::uint8_t, 16> plaintext;
     SecUtil::SecureArray<std::uint8_t, 32> computed_hmac;
     SecUtil::SecureArray<std::uint8_t, 32> expected_hmac;
+    std::size_t buffer_octets = 0;
     bool plaintext_to_write = false;
+    std::uint8_t *tail = nullptr;
+    std::uint8_t *current_block = nullptr;
+    std::uint8_t *head = nullptr;
 
     // Place the IV at the start of the ring buffer, as the oldest 16 octets
     // are used to XOR the current block to facilitate CBC mode
-    std::ranges::copy(iv, ring_buffer.begin());
+    std::copy(iv.begin(), iv.end(), ring_buffer.begin());
 
     // Assign the tail, head, and current_block variables; head after the IV
-    std::size_t tail = 0;
-    std::size_t head = 16;
-    std::size_t current_block = 16;
+    tail = ring_buffer.data();
+    current_block = head = tail + 16;
 
     try
     {
@@ -1012,7 +1006,7 @@ DecryptResult Decryptor::DecryptStream(
         }
 
         // Attempt to read 48 octets into the ring buffer
-        source.read(reinterpret_cast<char *>(ring_buffer.data() + head), 48);
+        source.read(reinterpret_cast<char *>(head), 48);
         if (source.bad() || (!source.good() && !source.eof()))
         {
             logger->error << "Error reading initial ciphertext" << std::flush;
@@ -1032,7 +1026,7 @@ DecryptResult Decryptor::DecryptStream(
             progress_callback(instance, octets_consumed);
         }
 
-        // Iterate over all of the ciphertext blocks
+        // Iterate over all of the ciphertext blocks (block at tail + 16)
         while(!source.eof())
         {
             // Is there a plaintext block to write?
@@ -1050,17 +1044,15 @@ DecryptResult Decryptor::DecryptStream(
             }
 
             // Add this block to the HMAC computation
-            hmac.Input({ring_buffer.data() + current_block, 16});
+            hmac.Input({current_block, 16});
 
             // Decrypt the block, placing it in plaintext
-            aes.Decrypt(
-                std::span<std::uint8_t, 16>(ring_buffer.data() + current_block,
-                                            16),
-                plaintext);
+            aes.Decrypt(std::span<std::uint8_t, 16>(current_block, 16),
+                        plaintext);
 
             // XOR the plaintext with the prior block located at tail (CBC mode)
             XORBlock(plaintext,
-                     std::span<std::uint8_t, 16>(ring_buffer.data() + tail, 16),
+                     std::span<std::uint8_t, 16>(tail, 16),
                      plaintext);
 
             // Note there is plaintext to write out
@@ -1085,17 +1077,26 @@ DecryptResult Decryptor::DecryptStream(
             }
 
             // Advance the tail (now pointing at ciphertext just decrypted)
-            // and current_block, wrapping modulo the ring buffer size
-            tail = (tail + 16) % ring_buffer.size();
-            current_block = (current_block + 16) % ring_buffer.size();
+            // and the current_block pointer
+            tail += 16;
+            current_block += 16;
 
-            // Reset the head value if it is positioned beyond the ring buffer,
-            // as the following line will then read 16 more octets
-            if (head == ring_buffer.size()) head = 0;
+            // Wrap the ring buffer pointers as necessary
+            if (tail == (ring_buffer.data() + ring_buffer.size()))
+            {
+                tail = ring_buffer.data();
+            }
+            if (current_block == (ring_buffer.data() + ring_buffer.size()))
+            {
+                current_block = ring_buffer.data();
+            }
+            if (head == (ring_buffer.data() + ring_buffer.size()))
+            {
+                head = ring_buffer.data();
+            }
 
             // Attempt to read the next 16 octets
-            source.read(reinterpret_cast<char *>(ring_buffer.data() + head),
-                        16);
+            source.read(reinterpret_cast<char *>(head), 16);
             if (source.bad() || (!source.good() && !source.eof()))
             {
                 logger->error << "Error reading ciphertext" << std::flush;
@@ -1109,12 +1110,25 @@ DecryptResult Decryptor::DecryptStream(
         // The tail would be pointing at the previous ciphertext block or the
         // IV; advance the tail where it would be pointing to the modulo octet
         // or HMAC (depending on the stream version)
-        tail = (tail + 16) % ring_buffer.size();
+        tail += 16;
+
+        // Adjust the tail to the start if at the end of ring
+        if (tail == (ring_buffer.data() + ring_buffer.size()))
+        {
+            tail = ring_buffer.data();
+        }
 
         // Determine how many octets remain in the ring buffer; if the head
         // and tail are equal, the buffer is empty
-        std::size_t buffer_octets =
-            (head >= tail) ? (head - tail) : (ring_buffer.size() - tail + head);
+        if (head >= tail)
+        {
+            buffer_octets = head - tail;
+        }
+        else
+        {
+            buffer_octets = (ring_buffer.data() + ring_buffer.size()) - tail +
+                            (head - ring_buffer.data());
+        }
 
         // Buffer should have 32 or 33 octets, depending on the stream version
         if ((((stream_version == 0) || (stream_version >= 3)) &&
@@ -1131,33 +1145,37 @@ DecryptResult Decryptor::DecryptStream(
         if ((stream_version == 0) || (stream_version >= 3))
         {
             // Tail should be pointing to HMAC for these stream versions
-            std::ranges::copy_n(ring_buffer.data() + tail,
-                                16,
-                                expected_hmac.begin());
-            tail = (tail + 16) % ring_buffer.size();
-            std::ranges::copy_n(ring_buffer.data() + tail,
-                                16,
-                                expected_hmac.begin() + 16);
+            std::copy(tail, tail + 16, expected_hmac.begin());
+            tail += 16;
+            if (tail == (ring_buffer.data() + ring_buffer.size()))
+            {
+                tail = ring_buffer.data();
+            }
+            std::copy(tail, tail + 16, expected_hmac.begin() + 16);
         }
         else
         {
             // Tail points at the modulo octet
-            reserved_modulo = ring_buffer.at(tail);
+            reserved_modulo = *tail;
 
             // Balance is HMAC data (this is the first 15 octets)
-            std::ranges::copy_n(ring_buffer.data() + tail + 1,
-                                15,
-                                expected_hmac.begin());
-            tail = (tail + 16) % ring_buffer.size();
+            std::copy(tail + 1, tail + 16, expected_hmac.begin());
+            tail += 16;
+            if (tail == (ring_buffer.data() + ring_buffer.size()))
+            {
+                tail = ring_buffer.data();
+            }
 
             // Copy the next 16 octets (note only 15 octets copied so far)
-            std::ranges::copy_n(ring_buffer.data() + tail,
-                                16,
-                                expected_hmac.begin() + 15);
-            tail = (tail + 16) % ring_buffer.size();
+            std::copy(tail, tail + 16, expected_hmac.begin() + 15);
+            tail += 16;
+            if (tail == (ring_buffer.data() + ring_buffer.size()))
+            {
+                tail = ring_buffer.data();
+            }
 
             // Finally, copy the last octet
-            expected_hmac[31] = ring_buffer.at(tail);
+            expected_hmac[31] = *tail;
         }
 
         // Compute the hmac
@@ -1171,7 +1189,7 @@ DecryptResult Decryptor::DecryptStream(
             return DecryptResult::AlteredMessage;
         }
 
-        // For stream version >= 3, the last block is padded
+        // For stream version >= 3, the modulo is stored in the final block
         if (stream_version >= 3)
         {
             // There MUST be a block of unwritten plaintext, else there was a
@@ -1184,7 +1202,7 @@ DecryptResult Decryptor::DecryptStream(
                 return DecryptResult::InvalidAESCryptStream;
             }
 
-            // Ensure the padding value is sane
+            // Ensure the value is sane
             if ((plaintext[15] == 0) || (plaintext[15] > 16))
             {
                 // Unexpected number octets remaining
@@ -1193,19 +1211,17 @@ DecryptResult Decryptor::DecryptStream(
                 return DecryptResult::InvalidAESCryptStream;
             }
 
-            // Determine the length of actual data in the final block
+            // Extract the modulo value from the final octet in the array
             reserved_modulo = 16 - plaintext[15];
 
-            // If the length is 0, it means the entire block is padding
+            // If the modulo is 0, it means the entire block is padding
             if (reserved_modulo == 0) plaintext_to_write = false;
         }
 
         // Write out any residual plaintext with respect to the modulo
         if (plaintext_to_write)
         {
-            // Final block size is the lower 4 bits of reserved_modulo; the
-            // modulo octet could be 0 with stream formats 0 to 2, indicating
-            // the entire final block is valid data
+            // Final block size is the lower 4 bits of the modulo octet
             std::size_t final_block_size =
                 ((reserved_modulo & 0x0f) == 0) ? 16 : (reserved_modulo & 0x0f);
 
@@ -1223,26 +1239,12 @@ DecryptResult Decryptor::DecryptStream(
     }
     catch (const Crypto::Cipher::AESException &e)
     {
-        logger->critical << "AES Exception in Decryptor: " << e.what()
-                         << std::flush;
+        logger->critical << "AES Exception: " << e.what() << std::flush;
         return DecryptResult::InternalError;
     }
     catch (const Crypto::Hashing::HashException &e)
     {
-        logger->critical << "Hash Exception in Decryptor: " << e.what()
-                         << std::flush;
-        return DecryptResult::InternalError;
-    }
-    catch (const std::exception &e)
-    {
-        logger->critical << "Unexpected internal error in Decryptor: "
-                         << e.what() << std::flush;
-        return DecryptResult::InternalError;
-    }
-    catch (...)
-    {
-        logger->critical << "Unexpected internal error in Decryptor"
-                         << std::flush;
+        logger->critical << "Hash Exception: " << e.what() << std::flush;
         return DecryptResult::InternalError;
     }
 

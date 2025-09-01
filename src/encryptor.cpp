@@ -895,7 +895,7 @@ EncryptResult Encryptor::EncryptStream(
         Crypto::Cipher::AES aes(key);
 
         // Copy the IV into the ciphertext buffer
-        std::ranges::copy(iv, ciphertext.begin());
+        std::copy(iv.begin(), iv.end(), ciphertext.begin());
 
         // Initialize the consumed / progress counters, read_length
         octets_consumed = 0;
