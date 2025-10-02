@@ -37,7 +37,8 @@ nn Octets - Extension identifier.  This is either a URI or an standard
             identifier documented on the standard extensions page, either of
             which is terminated by a single 0x00 octet.  All extension
             identifiers are case sensitive.  URIs that use domain names,
-            for example, must ensure the protocol and host portions lowercase.
+            for example, must ensure the protocol and host portions are
+            lowercase.
 
                 Examples of URIs:
                     http://aescrypt.com/extensions/creator/
@@ -98,7 +99,7 @@ nn Octets - Extension identifier.  This is either a URI or an identifier
             documented on the standard extensions page, either of which is
             terminated by a single 0x00 octet.  All extension identifiers are
             case sensitive.  URIs that use domain names, for example, must
-            ensure the protocol and host portions lowercase.
+            ensure the protocol and host portions are lowercase.
 
                 Examples of URIs:
                     http://aescrypt.com/extensions/creator/
