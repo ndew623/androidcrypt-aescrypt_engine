@@ -37,7 +37,8 @@ nn Octets - Extension identifier.  This is either a URI or an standard
             identifier documented on the standard extensions page, either of
             which is terminated by a single 0x00 octet.  All extension
             identifiers are case sensitive.  URIs that use domain names,
-            for example, must ensure the protocol and host portions lowercase.
+            for example, must ensure the protocol and host portions are
+            lowercase.
 
                 Examples of URIs:
                     http://aescrypt.com/extensions/creator/
@@ -72,7 +73,7 @@ nn Octets - The contents of the extension
 16 Octets - Initialization Vector (IV) used to encrypt the Session IV and
             Session Key
 48 Octets - Encrypted Session IV and 256-bit AES Session Key used to encrypt the
-            stream, protected by a raw key or PBKDF2-derived key
+            stream, PBKDF2-derived key using HMAC-SHA512
             (IV = 16 octets; Key = 32 octets)
 32 Octets - HMAC-SHA256(48-octet IV and KEY || 0x03)
 nn Octets - Ciphertext (AES-256 in CBC mode; PKCS#7 padded; 2^64 octets max)
@@ -98,7 +99,7 @@ nn Octets - Extension identifier.  This is either a URI or an identifier
             documented on the standard extensions page, either of which is
             terminated by a single 0x00 octet.  All extension identifiers are
             case sensitive.  URIs that use domain names, for example, must
-            ensure the protocol and host portions lowercase.
+            ensure the protocol and host portions are lowercase.
 
                 Examples of URIs:
                     http://aescrypt.com/extensions/creator/
