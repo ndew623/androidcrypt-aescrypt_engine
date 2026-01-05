@@ -1,5 +1,17 @@
 # Change Log
 
+v4.1.3
+
+- Addressed compiler warnings on Windows
+- CMake changes
+- Updated dependencies
+
+v4.1.2
+
+- Minor cleanup in the code; revised comments
+- CMake changes to support downstream unit testing
+- Updated dependencies
+
 v4.1.1
 
 - Upgraded library dependencies as a part of expanding support for additional
